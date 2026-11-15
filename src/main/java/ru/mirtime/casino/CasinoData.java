@@ -1,8 +1,5 @@
 package ru.mirtime.casino;
 
-import net.milkbowl.vault.economy.Economy;
-import org.black_ixx.playerpoints.PlayerPoints;
-import org.black_ixx.playerpoints.PlayerPointsAPI;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
@@ -11,8 +8,8 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.plugin.RegisteredServiceProvider;
 
+import java.lang.reflect.Method;
 import java.text.NumberFormat;
 import java.util.*;
 import java.util.regex.Matcher;
@@ -20,12 +17,10 @@ import java.util.regex.Pattern;
 
 public class CasinoData {
 
-    public Economy economy;
-    public PlayerPointsAPI pointsAPI;
     public final Map<UUID, PlayerSession> sessions = new HashMap<>();
     private static final NumberFormat FORMAT = NumberFormat.getInstance(Locale.US);
 
-    public enum Currency {
+    public enum Valuta {
         TOKENS("&#00E5FFТокены", Material.EMERALD),
         VAULT("&#00FF66Монеты", Material.SUNFLOWER),
         DIAMOND("&#00a6ffАлмазы", Material.DIAMOND),
@@ -34,7 +29,7 @@ public class CasinoData {
         public final String displayName;
         public final Material icon;
 
-        Currency(String displayName, Material icon) {
+        Valuta(String displayName, Material icon) {
             this.displayName = displayName;
             this.icon = icon;
         }
@@ -42,49 +37,55 @@ public class CasinoData {
 
     public static class PlayerSession {
         public String selectedGame = "roulette";
-        public Currency currency = Currency.TOKENS;
+        public Valuta currency = Valuta.TOKENS;
         public long bet = 10;
         public boolean inProgress = false;
     }
 
-    public void init(MirTimeCasino plugin) {
-        if (plugin.getServer().getPluginManager().getPlugin("Vault") != null) {
-            RegisteredServiceProvider<Economy> rsp = plugin.getServer().getServicesManager().getRegistration(Economy.class);
-            if (rsp != null) economy = rsp.getProvider();
-        }
-        if (Bukkit.getPluginManager().isPluginEnabled("PlayerPoints")) {
-            pointsAPI = PlayerPoints.getInstance().getAPI();
-        }
-    }
+    public void init(MirTimeCasino plugin) {}
 
     public PlayerSession getSession(Player p) {
         return sessions.computeIfAbsent(p.getUniqueId(), k -> new PlayerSession());
     }
 
-    public long getBalance(Player p, Currency c) {
+    public long getBalance(Player p, Valuta c) {
         return switch (c) {
-            case TOKENS -> pointsAPI != null ? pointsAPI.look(p.getUniqueId()) : 0;
-            case VAULT -> economy != null ? (long) economy.getBalance(p) : 0;
+            case TOKENS -> parsePapiLong(p, "%playerpoints_points%");
+            case VAULT -> parsePapiLong(p, "%vault_eco_balance%");
             case DIAMOND -> countItems(p, Material.DIAMOND);
             case NETHERITE -> countItems(p, Material.NETHERITE_INGOT);
         };
     }
 
-    public boolean takeBalance(Player p, Currency c, long amount) {
-        if (amount <= 0 || getBalance(p, c) < amount) return false;
-        return switch (c) {
-            case TOKENS -> pointsAPI != null && pointsAPI.take(p.getUniqueId(), (int) amount);
-            case VAULT -> economy != null && economy.withdrawPlayer(p, amount).transactionSuccess();
-            case DIAMOND -> { removeItems(p, Material.DIAMOND, (int) amount); yield true; }
-            case NETHERITE -> { removeItems(p, Material.NETHERITE_INGOT, (int) amount); yield true; }
-        };
+    private long parsePapiLong(Player p, String placeholder) {
+        try {
+            if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
+                Class<?> papi = Class.forName("me.clip.placeholderapi.PlaceholderAPI");
+                Method setPlaceholders = papi.getMethod("setPlaceholders", Player.class, String.class);
+                String res = (String) setPlaceholders.invoke(null, p, placeholder);
+                res = res.replaceAll("[^0-9.]", "");
+                if (!res.isEmpty()) return (long) Double.parseDouble(res);
+            }
+        } catch (Exception ignored) {}
+        return 0;
     }
 
-    public void giveBalance(Player p, Currency c, long amount) {
+    public boolean takeBalance(Player p, Valuta c, long amount) {
+        if (amount <= 0 || getBalance(p, c) < amount) return false;
+        switch (c) {
+            case TOKENS -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "points take " + p.getName() + " " + amount);
+            case VAULT -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "eco take " + p.getName() + " " + amount);
+            case DIAMOND -> removeItems(p, Material.DIAMOND, (int) amount);
+            case NETHERITE -> removeItems(p, Material.NETHERITE_INGOT, (int) amount);
+        }
+        return true;
+    }
+
+    public void giveBalance(Player p, Valuta c, long amount) {
         if (amount <= 0) return;
         switch (c) {
-            case TOKENS -> { if (pointsAPI != null) pointsAPI.give(p.getUniqueId(), (int) amount); }
-            case VAULT -> { if (economy != null) economy.depositPlayer(p, amount); }
+            case TOKENS -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "points give " + p.getName() + " " + amount);
+            case VAULT -> Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "eco give " + p.getName() + " " + amount);
             case DIAMOND -> giveItems(p, Material.DIAMOND, (int) amount);
             case NETHERITE -> giveItems(p, Material.NETHERITE_INGOT, (int) amount);
         }
