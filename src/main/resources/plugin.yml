@@ -1,0 +1,13 @@
+name: MirTimeCasino
+version: '1.0.0'
+main: ru.mirtime.casino.MirTimeCasino
+api-version: '1.21'
+softdepend:
+  - Vault
+  - PlayerPoints
+commands:
+  casino:
+    description: Открыть казино MIR-TIME
+    aliases:
+      - казино
+      - games
