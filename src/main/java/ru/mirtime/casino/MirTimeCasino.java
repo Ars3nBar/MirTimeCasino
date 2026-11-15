@@ -365,3 +365,133 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
             }
         }.runTaskTimer(this, 5L, 8L);
     }
+    private double evalPoker(int[] r, int[] st, Player p) {
+        Arrays.sort(r);
+        boolean flush = st[0] == st[1] && st[1] == st[2] && st[2] == st[3] && st[3] == st[4];
+        boolean straight = (r[4] - r[0] == 4) && (r[0] != r[1] && r[1] != r[2] && r[2] != r[3] && r[3] != r[4]);
+        Map<Integer, Integer> c = new HashMap<>();
+        for (int x : r) c.put(x, c.getOrDefault(x, 0) + 1);
+
+        String name = "&cСтаршая карта (x0.0)";
+        double m = 0.0;
+        if (flush && straight && r[0] == 4) { name = "&#00FF66&lРОЯЛ-ФЛЕШ (x50.0)"; m = 50.0; }
+        else if (flush && straight) { name = "&#00FF66&lСтрит-Флеш (x25.0)"; m = 25.0; }
+        else if (c.containsValue(4)) { name = "&#00FF66&lКаре (x15.0)"; m = 15.0; }
+        else if (c.containsValue(3) && c.containsValue(2)) { name = "&#00FF66Фулл-Хаус (x8.0)"; m = 8.0; }
+        else if (flush) { name = "&#00FF66Флеш (x5.0)"; m = 5.0; }
+        else if (straight) { name = "&#00FF66Стрит (x4.0)"; m = 4.0; }
+        else if (c.containsValue(3)) { name = "&fСет / Тройка (x2.5)"; m = 2.5; }
+        else if (c.size() == 3) { name = "&#00E5FFДве пары (x1.6)"; m = 1.6; }
+        else if (c.size() == 4) { name = "&#00a6ffОдна пара (x1.2)"; m = 1.2; }
+        p.sendMessage(color("&#0055ff&lMIR-TIME &8» &fКомбинация: " + name));
+        return m;
+    }
+
+    private void runCoinflip(Player p, PlayerSession s) {
+        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lМонетка"));
+        frame(inv);
+        p.openInventory(inv);
+        new BukkitRunnable() {
+            int ticks = 0;
+            @Override
+            public void run() {
+                if (!p.isOnline()) { cancel(); return; }
+                boolean h = ticks % 2 == 0;
+                inv.setItem(22, item(h ? Material.SUNFLOWER : Material.GOLD_NUGGET, h ? "&#00FF66&lОРЁЛ" : "&#00E5FF&lРЕШКА", null));
+                p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 1.4f);
+                if (++ticks >= 14) {
+                    cancel();
+                    boolean win = random.nextBoolean();
+                    inv.setItem(22, item(win ? Material.SUNFLOWER : Material.COAL, win ? "&#00FF66&lПОБЕДА! (x1.95)" : "&c&lПРОИГРЫШ (x0.0)", null));
+                    finish(p, s, win ? 1.95 : 0.0);
+                    inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
+                }
+            }
+        }.runTaskTimer(this, 0L, 3L);
+    }
+
+    private void openDice(Player p) {
+        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lКости"));
+        frame(inv);
+        inv.setItem(20, item(Material.LIGHT_BLUE_DYE, "&#00E5FF&lМеньше 7 &8(&#00FF66x1.9&8)", null));
+        inv.setItem(22, item(Material.NETHER_STAR, "&#00FF66&lРовно 7 &8(&#00FF66&lx4.5&8)", null));
+        inv.setItem(24, item(Material.LIME_DYE, "&#00FF66&lБольше 7 &8(&#00FF66x1.9&8)", null));
+        p.openInventory(inv);
+    }
+
+    private void openHorses(Player p) {
+        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lСкачки"));
+        frame(inv);
+        inv.setItem(20, item(Material.DIAMOND_HORSE_ARMOR, "&#00E5FF&lНеоновый Вихрь &8(&#00FF66x2.0&8)", null));
+        inv.setItem(21, item(Material.GOLDEN_HORSE_ARMOR, "&#00FF66&lИзумрудный Гром &8(&#00FF66x2.0&8)", null));
+        inv.setItem(23, item(Material.IRON_HORSE_ARMOR, "&f&lСтальной Рыцарь &8(&#00FF66x2.0&8)", null));
+        inv.setItem(24, item(Material.LEATHER_HORSE_ARMOR, "&#00a6ff&lТёмный Фантом &8(&#00FF66x2.0&8)", null));
+        p.openInventory(inv);
+    }
+
+    private void openTreasure(Player p) {
+        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lКладоискатель"));
+        frame(inv);
+        int[] slots = {12, 13, 14, 21, 22, 23, 30, 31, 32};
+        List<Double> prizes = new ArrayList<>(List.of(0.0, 0.0, 0.0, 0.5, 1.0, 1.2, 1.5, 2.0, 2.5));
+        Collections.shuffle(prizes);
+        Map<Integer, Double> map = new HashMap<>();
+        for (int i = 0; i < slots.length; i++) {
+            map.put(slots[i], prizes.get(i));
+            inv.setItem(slots[i], item(Material.SAND, "&#00E5FF[●] &eПесок", null));
+        }
+        treasureFields.put(p.getUniqueId(), map);
+        treasureWin.put(p.getUniqueId(), 0.0);
+        inv.setItem(40, item(Material.CHEST, "&#00FF66&l[Забрать награду]", null));
+        p.openInventory(inv);
+    }
+
+    private void handleGameClick(Player p, PlayerSession s, int slot, Inventory inv) {
+        if (s.selectedGame.equals("dice") && s.inProgress && (slot == 20 || slot == 22 || slot == 24)) {
+            int sum = (random.nextInt(6) + 1) + (random.nextInt(6) + 1);
+            p.sendMessage(color("&#0055ff&lMIR-TIME &8» &fСумма кубиков: &#00FF66&l" + sum));
+            double m = (slot == 20 && sum < 7) ? 1.9 : (slot == 22 && sum == 7) ? 4.5 : (slot == 24 && sum > 7) ? 1.9 : 0.0;
+            finish(p, s, m);
+            inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
+        }
+        if (s.selectedGame.equals("horses") && s.inProgress && (slot == 20 || slot == 21 || slot == 23 || slot == 24)) {
+            int[] h = {20, 21, 23, 24};
+            finish(p, s, h[random.nextInt(4)] == slot ? 2.0 : 0.0);
+            inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
+        }
+        if (s.selectedGame.equals("treasure") && s.inProgress) {
+            Map<Integer, Double> field = treasureFields.get(p.getUniqueId());
+            if (field != null && field.containsKey(slot)) {
+                double m = field.remove(slot);
+                if (m == 0.0) {
+                    p.playSound(p.getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 1f, 1f);
+                    inv.setItem(slot, item(Material.TNT, "&c&l[✗] ДИНАМИТ!", null));
+                    finish(p, s, 0.0);
+                    inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
+                } else {
+                    p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 1.3f);
+                    double tot = treasureWin.getOrDefault(p.getUniqueId(), 0.0) + m;
+                    treasureWin.put(p.getUniqueId(), tot);
+                    inv.setItem(slot, item(Material.GOLD_INGOT, "&#00FF66&l[$] +" + m + "x", null));
+                    inv.setItem(40, item(Material.CHEST, "&#00FF66&l[Забрать: x" + String.format("%.1f", tot) + "]", null));
+                }
+            } else if (slot == 40 && treasureWin.getOrDefault(p.getUniqueId(), 0.0) > 0) {
+                finish(p, s, treasureWin.get(p.getUniqueId()));
+                inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
+            }
+        }
+    }
+
+    private void finish(Player p, PlayerSession s, double factor) {
+        s.inProgress = false;
+        long win = Math.round(s.bet * factor);
+        if (win > 0) {
+            data.giveBalance(p, s.currency, win);
+            p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
+            p.sendMessage(color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8» &fПобеда! Выигрыш: &#00FF66&l" + fmt(win) + " &8(&#00FF66x" + factor + "&8)"));
+        } else {
+            p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            p.sendMessage(color("&#0055ff[✗] &cВы проиграли ставку! &fДодеп токенов: &#00E5FF&ndon.mir-time.ru"));
+        }
+    }
+}
