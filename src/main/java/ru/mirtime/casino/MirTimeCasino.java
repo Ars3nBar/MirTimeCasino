@@ -93,14 +93,14 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     public void onClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
         String title = e.getView().getTitle();
-        if (!title.contains("MIR-TIME") && !title.contains("Казино:") && !title.contains("Игра:")) return;
+        if (!title.contains("Казино") && !title.contains("Игра:")) return;
         e.setCancelled(true);
         if (e.getCurrentItem() == null || e.getCurrentItem().getType() == Material.AIR) return;
 
         PlayerSession s = data.getSession(p);
         int slot = e.getRawSlot();
 
-        if (title.contains("MIR-TIME")) {
+        if (title.contains("|") && title.contains("Казино")) {
             p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
             switch (slot) {
                 case 12 -> { s.selectedGame = "treasure"; openBet(p); }
@@ -199,7 +199,6 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
             }
         }.runTaskTimer(this, 0L, 2L);
     }
-
     private void runPoker(Player p, PlayerSession s) {
         Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lПокер"));
         frame(inv);
@@ -227,6 +226,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
             }
         }.runTaskTimer(this, 5L, 8L);
     }
+
     private double evalPoker(int[] r, int[] st, Player p) {
         Arrays.sort(r);
         boolean flush = st[0] == st[1] && st[1] == st[2] && st[2] == st[3] && st[3] == st[4];
