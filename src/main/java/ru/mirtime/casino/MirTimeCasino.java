@@ -8,14 +8,19 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 import static ru.mirtime.casino.CasinoData.*;
 
@@ -24,24 +29,37 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     private final CasinoData data = new CasinoData();
     private final Map<UUID, Map<Integer, Double>> treasureFields = new HashMap<>();
     private final Map<UUID, Double> treasureWin = new HashMap<>();
-    private final Random random = new Random();
 
     @Override
     public void onEnable() {
         data.init(this);
         if (getCommand("casino") != null) getCommand("casino").setExecutor(this);
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("MirTimeCasino запущен!");
+        getLogger().info("MirTimeCasino успешно запущен с защитой CasinoHolder и анти-дюпом!");
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (sender instanceof Player p) openMain(p);
+        if (!(sender instanceof Player p)) return true;
+
+        PlayerSession s = data.getSession(p);
+        if (s.inProgress) {
+            p.sendMessage(color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8» &cЗавершите текущую игру в казино!"));
+            return true;
+        }
+        openMain(p);
         return true;
     }
 
+    private Inventory createMenu(CasinoHolder.MenuType type, int size, String title) {
+        CasinoHolder holder = new CasinoHolder(type);
+        Inventory inv = Bukkit.createInventory(holder, size, color(title));
+        holder.setInventory(inv);
+        return inv;
+    }
+
     public void openMain(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8| &fКазино &8[&#00FF66$&8]"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.MAIN, 45, "&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8| &fКазино &8[&#00FF66$&8]");
         frame(inv);
         inv.setItem(12, item(Material.TNT, "&#0055ff&l[$] &#00E5FF&lКладоискатель", List.of(" &#00FF66➥ Нажмите&f, чтобы играть", "", " &7Копай песок и собирай иксы,", " &7но остерегайся динамита!")));
         inv.setItem(14, item(Material.LEATHER_HORSE_ARMOR, "&#0055ff&l[$] &#00E5FF&lКонные скачки", List.of(" &#00FF66➥ Нажмите&f, чтобы играть", "", " &7Выбери своего скакуна и забери", " &7приз за победу &#00FF66&lx2.0&7!")));
@@ -58,10 +76,9 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
         )));
         p.openInventory(inv);
     }
-
     public void openBet(Player p) {
         PlayerSession s = data.getSession(p);
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Казино: &#00E5FF&lНастройка ставки"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.BET, 45, "&#0055ff&l＄ Казино: &#00E5FF&lНастройка ставки");
         frame(inv);
         long bal = data.getBalance(p, s.currency);
         long step = (s.currency == Valuta.VAULT) ? 100000L : 10L;
@@ -80,7 +97,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     }
 
     public void openCurrency(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Казино: &#00E5FF&lВыбор валюты"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.CURRENCY, 45, "&#0055ff&l＄ Казино: &#00E5FF&lВыбор валюты");
         frame(inv);
         inv.setItem(20, item(Material.EMERALD, "&#0055ff[$] &#00E5FF&lТокены", List.of(" &#00FF66➥ Нажмите&f, чтобы выбрать", " &7Додеп: &#00E5FF&ndon.mir-time.ru")));
         inv.setItem(21, item(Material.SUNFLOWER, "&#0055ff[$] &#00FF66&lМонеты", List.of(" &#00FF66➥ Нажмите&f, чтобы выбрать")));
@@ -89,74 +106,126 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
         inv.setItem(40, item(Material.ARROW, "&c[←] &fНазад", null));
         p.openInventory(inv);
     }
-    @EventHandler
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onDrag(InventoryDragEvent e) {
+        if (e.getInventory().getHolder() instanceof CasinoHolder) {
+            e.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
     public void onClick(InventoryClickEvent e) {
         if (!(e.getWhoClicked() instanceof Player p)) return;
-        String title = e.getView().getTitle();
-        if (!title.contains("Казино") && !title.contains("Игра:")) return;
+        if (!(e.getView().getTopInventory().getHolder() instanceof CasinoHolder holder)) return;
+
         e.setCancelled(true);
+
+        if (e.getClickedInventory() != e.getView().getTopInventory()) return;
         if (e.getCurrentItem() == null || e.getCurrentItem().getType() == Material.AIR) return;
 
         PlayerSession s = data.getSession(p);
         int slot = e.getRawSlot();
 
-        if (title.contains("|") && title.contains("Казино")) {
-            p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-            switch (slot) {
-                case 12 -> { s.selectedGame = "treasure"; openBet(p); }
-                case 14 -> { s.selectedGame = "horses"; openBet(p); }
-                case 20 -> { s.selectedGame = "roulette"; openBet(p); }
-                case 21 -> { s.selectedGame = "poker"; openBet(p); }
-                case 23 -> { s.selectedGame = "dice"; openBet(p); }
-                case 24 -> { s.selectedGame = "coinflip"; openBet(p); }
-                case 31 -> {
-                    p.closeInventory();
-                    p.sendMessage(color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8» &fКупить токены для додепа: &#00FF66&ndon.mir-time.ru"));
+        switch (holder.getType()) {
+            case MAIN -> {
+                p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                switch (slot) {
+                    case 12 -> { s.selectedGame = "treasure"; openBet(p); }
+                    case 14 -> { s.selectedGame = "horses"; openBet(p); }
+                    case 20 -> { s.selectedGame = "roulette"; openBet(p); }
+                    case 21 -> { s.selectedGame = "poker"; openBet(p); }
+                    case 23 -> { s.selectedGame = "dice"; openBet(p); }
+                    case 24 -> { s.selectedGame = "coinflip"; openBet(p); }
+                    case 31 -> {
+                        p.closeInventory();
+                        p.sendMessage(color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8» &fКупить токены для додепа: &#00FF66&ndon.mir-time.ru"));
+                    }
                 }
             }
-            return;
-        }
-
-        if (title.contains("Выбор валюты")) {
-            p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-            switch (slot) {
-                case 20 -> { s.currency = Valuta.TOKENS; s.bet = 10; openBet(p); }
-                case 21 -> { s.currency = Valuta.VAULT; s.bet = 100000; openBet(p); }
-                case 23 -> { s.currency = Valuta.DIAMOND; s.bet = 1; openBet(p); }
-                case 24 -> { s.currency = Valuta.NETHERITE; s.bet = 1; openBet(p); }
-                case 40 -> openBet(p);
+            case CURRENCY -> {
+                p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                switch (slot) {
+                    case 20 -> { s.currency = Valuta.TOKENS; s.bet = 10; openBet(p); }
+                    case 21 -> { s.currency = Valuta.VAULT; s.bet = 100000; openBet(p); }
+                    case 23 -> { s.currency = Valuta.DIAMOND; s.bet = 1; openBet(p); }
+                    case 24 -> { s.currency = Valuta.NETHERITE; s.bet = 1; openBet(p); }
+                    case 40 -> openBet(p);
+                }
             }
-            return;
-        }
+            case BET -> {
+                if (s.inProgress) return;
+                long step = (s.currency == Valuta.VAULT) ? 100000L : 10L;
+                long shift = (s.currency == Valuta.VAULT) ? 1000000L : 100L;
+                long maxBet = 1_000_000_000L;
 
-        if (title.contains("Настройка ставки")) {
-            long step = (s.currency == Valuta.VAULT) ? 100000L : 10L;
-            long shift = (s.currency == Valuta.VAULT) ? 1000000L : 100L;
-            if (slot == 13) {
-                p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
-                ClickType ct = e.getClick();
-                if (ct == ClickType.LEFT) s.bet += step;
-                else if (ct == ClickType.RIGHT) s.bet = Math.max(1, s.bet - step);
-                else if (ct == ClickType.SHIFT_LEFT) s.bet += shift;
-                else if (ct == ClickType.SHIFT_RIGHT) s.bet = Math.max(1, s.bet - shift);
-                openBet(p);
-            } else if (slot == 23) openCurrency(p);
-            else if (slot == 40) openMain(p);
-            else if (slot == 31) {
-                if (!data.takeBalance(p, s.currency, s.bet)) {
-                    p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
-                    p.sendMessage(color("&#0055ff&lMIR-TIME &8» &cНедостаточно средств! &fДодеп токенов: &#00E5FF&ndon.mir-time.ru"));
+                if (slot == 13) {
+                    p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1.2f);
+                    ClickType ct = e.getClick();
+                    if (ct == ClickType.LEFT) s.bet = Math.min(maxBet, s.bet + step);
+                    else if (ct == ClickType.RIGHT) s.bet = Math.max(1, s.bet - step);
+                    else if (ct == ClickType.SHIFT_LEFT) s.bet = Math.min(maxBet, s.bet + shift);
+                    else if (ct == ClickType.SHIFT_RIGHT) s.bet = Math.max(1, s.bet - shift);
+                    openBet(p);
+                } else if (slot == 23) {
+                    openCurrency(p);
+                } else if (slot == 40) {
+                    openMain(p);
+                } else if (slot == 31) {
+                    if (s.bet <= 0 || !data.takeBalance(p, s.currency, s.bet)) {
+                        p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+                        p.sendMessage(color("&#0055ff&lMIR-TIME &8» &cНедостаточно средств! &fДодеп токенов: &#00E5FF&ndon.mir-time.ru"));
+                        return;
+                    }
+                    s.activeBet = s.bet;
+                    s.activeCurrency = s.currency;
+                    startGame(p, s);
+                }
+            }
+            case GAME -> {
+                if (slot == 40 && !s.inProgress) {
+                    openBet(p);
                     return;
                 }
-                startGame(p, s);
+                handleGameClick(p, s, slot, e.getInventory());
             }
-            return;
         }
+    }
 
-        if (title.contains("Игра:")) {
-            if (slot == 40 && !s.inProgress) { openBet(p); return; }
-            handleGameClick(p, s, slot, e.getInventory());
+    @EventHandler
+    public void onClose(InventoryCloseEvent e) {
+        if (!(e.getPlayer() instanceof Player p)) return;
+        if (!(e.getInventory().getHolder() instanceof CasinoHolder holder)) return;
+        if (holder.getType() != CasinoHolder.MenuType.GAME) return;
+
+        PlayerSession s = data.getSession(p);
+        if (!s.inProgress) return;
+
+        if (s.selectedGame.equals("treasure")) {
+            double accumulated = treasureWin.getOrDefault(p.getUniqueId(), 0.0);
+            treasureFields.remove(p.getUniqueId());
+            treasureWin.remove(p.getUniqueId());
+            if (accumulated > 0) {
+                p.sendMessage(color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8» &eВы закрыли меню, текущий выигрыш автоматически зачислен!"));
+                finish(p, s, accumulated);
+            } else {
+                s.inProgress = false;
+                s.activeBet = 0;
+                p.sendMessage(color("&#0055ff[✗] &cИгра прервана при закрытии меню — ставка сгорела."));
+            }
+        } else if (s.selectedGame.equals("dice") || s.selectedGame.equals("horses")) {
+            s.inProgress = false;
+            s.activeBet = 0;
+            p.sendMessage(color("&#0055ff[✗] &cВы закрыли окно до выбора исхода — ставка сгорела."));
         }
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent e) {
+        UUID uuid = e.getPlayer().getUniqueId();
+        treasureFields.remove(uuid);
+        treasureWin.remove(uuid);
+        data.clearSession(uuid);
     }
 
     private void startGame(Player p, PlayerSession s) {
@@ -172,7 +241,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     }
 
     private void runRoulette(Player p, PlayerSession s) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lРулетка"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.GAME, 45, "&#0055ff&l＄ Игра: &#00E5FF&lРулетка");
         frame(inv);
         inv.setItem(13, item(Material.HOPPER, "&#00FF66&l▼ ВЫИГРЫШ ▼", null));
         inv.setItem(31, item(Material.HOPPER, "&#00FF66&l▲ ВЫИГРЫШ ▲", null));
@@ -181,15 +250,21 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
         double[] mults = {0.0, 0.5, 1.2, 1.5, 2.0, 0.0, 1.0, 5.0};
         Material[] mats = {Material.COAL, Material.BRICK, Material.IRON_INGOT, Material.GOLD_INGOT, Material.EMERALD, Material.COAL, Material.COPPER_INGOT, Material.DIAMOND};
         new BukkitRunnable() {
-            int ticks = 0, off = random.nextInt(mults.length);
+            int ticks = 0, off = ThreadLocalRandom.current().nextInt(mults.length);
             @Override
             public void run() {
-                if (!p.isOnline()) { cancel(); return; }
+                if (!p.isOnline()) {
+                    s.inProgress = false;
+                    cancel();
+                    return;
+                }
                 for (int i = 0; i < 7; i++) {
                     int idx = (off + i) % mults.length;
                     inv.setItem(19 + i, item(mats[idx], "&#0055ff[$] &#00FF66x" + mults[idx], null));
                 }
-                p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1f, 1.2f);
+                if (p.getOpenInventory().getTopInventory().equals(inv)) {
+                    p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1f, 1.2f);
+                }
                 off++;
                 if (++ticks >= 28) {
                     cancel();
@@ -199,24 +274,36 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
             }
         }.runTaskTimer(this, 0L, 2L);
     }
+
     private void runPoker(Player p, PlayerSession s) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lПокер"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.GAME, 45, "&#0055ff&l＄ Игра: &#00E5FF&lПокер");
         frame(inv);
         p.openInventory(inv);
         String[] ranks = {"6", "7", "8", "9", "10", "J", "Q", "K", "A"};
         String[] suits = {"♠", "♥", "♦", "♣"};
+
+        List<Integer> deck = new ArrayList<>();
+        for (int i = 0; i < 36; i++) deck.add(i);
+        Collections.shuffle(deck);
 
         new BukkitRunnable() {
             int idx = 0;
             final int[] r = new int[5], st = new int[5];
             @Override
             public void run() {
-                if (!p.isOnline()) { cancel(); return; }
+                if (!p.isOnline()) {
+                    s.inProgress = false;
+                    cancel();
+                    return;
+                }
                 if (idx < 5) {
-                    r[idx] = random.nextInt(ranks.length);
-                    st[idx] = random.nextInt(suits.length);
+                    int card = deck.get(idx);
+                    r[idx] = card % 9;
+                    st[idx] = card / 9;
                     inv.setItem(20 + idx, item(Material.PAPER, "&#0055ff[★] &fКарта: &#00FF66&l" + ranks[r[idx]] + suits[st[idx]], null));
-                    p.playSound(p.getLocation(), Sound.ITEM_BOOK_PAGE_TURN, 1f, 1.1f);
+                    if (p.getOpenInventory().getTopInventory().equals(inv)) {
+                        p.playSound(p.getLocation(), Sound.ITEM_BOOK_PAGE_TURN, 1f, 1.1f);
+                    }
                     idx++;
                 } else {
                     cancel();
@@ -226,7 +313,6 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
             }
         }.runTaskTimer(this, 5L, 8L);
     }
-
     private double evalPoker(int[] r, int[] st, Player p) {
         Arrays.sort(r);
         boolean flush = st[0] == st[1] && st[1] == st[2] && st[2] == st[3] && st[3] == st[4];
@@ -250,20 +336,26 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     }
 
     private void runCoinflip(Player p, PlayerSession s) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lМонетка"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.GAME, 45, "&#0055ff&l＄ Игра: &#00E5FF&lМонетка");
         frame(inv);
         p.openInventory(inv);
         new BukkitRunnable() {
             int ticks = 0;
             @Override
             public void run() {
-                if (!p.isOnline()) { cancel(); return; }
+                if (!p.isOnline()) {
+                    s.inProgress = false;
+                    cancel();
+                    return;
+                }
                 boolean h = ticks % 2 == 0;
                 inv.setItem(22, item(h ? Material.SUNFLOWER : Material.GOLD_NUGGET, h ? "&#00FF66&lОРЁЛ" : "&#00E5FF&lРЕШКА", null));
-                p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 1.4f);
+                if (p.getOpenInventory().getTopInventory().equals(inv)) {
+                    p.playSound(p.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1f, 1.4f);
+                }
                 if (++ticks >= 14) {
                     cancel();
-                    boolean win = random.nextBoolean();
+                    boolean win = ThreadLocalRandom.current().nextBoolean();
                     inv.setItem(22, item(win ? Material.SUNFLOWER : Material.COAL, win ? "&#00FF66&lПОБЕДА! (x1.95)" : "&c&lПРОИГРЫШ (x0.0)", null));
                     finish(p, s, win ? 1.95 : 0.0);
                     inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
@@ -273,7 +365,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     }
 
     private void openDice(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lКости"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.GAME, 45, "&#0055ff&l＄ Игра: &#00E5FF&lКости");
         frame(inv);
         inv.setItem(20, item(Material.LIGHT_BLUE_DYE, "&#00E5FF&lМеньше 7 &8(&#00FF66x1.9&8)", null));
         inv.setItem(22, item(Material.NETHER_STAR, "&#00FF66&lРовно 7 &8(&#00FF66&lx4.5&8)", null));
@@ -282,7 +374,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     }
 
     private void openHorses(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lСкачки"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.GAME, 45, "&#0055ff&l＄ Игра: &#00E5FF&lСкачки");
         frame(inv);
         inv.setItem(20, item(Material.DIAMOND_HORSE_ARMOR, "&#00E5FF&lНеоновый Вихрь &8(&#00FF66x2.0&8)", null));
         inv.setItem(21, item(Material.GOLDEN_HORSE_ARMOR, "&#00FF66&lИзумрудный Гром &8(&#00FF66x2.0&8)", null));
@@ -292,7 +384,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
     }
 
     private void openTreasure(Player p) {
-        Inventory inv = Bukkit.createInventory(null, 45, color("&#0055ff&l＄ Игра: &#00E5FF&lКладоискатель"));
+        Inventory inv = createMenu(CasinoHolder.MenuType.GAME, 45, "&#0055ff&l＄ Игра: &#00E5FF&lКладоискатель");
         frame(inv);
         int[] slots = {12, 13, 14, 21, 22, 23, 30, 31, 32};
         List<Double> prizes = new ArrayList<>(List.of(0.0, 0.0, 0.0, 0.5, 1.0, 1.2, 1.5, 2.0, 2.5));
@@ -310,7 +402,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
 
     private void handleGameClick(Player p, PlayerSession s, int slot, Inventory inv) {
         if (s.selectedGame.equals("dice") && s.inProgress && (slot == 20 || slot == 22 || slot == 24)) {
-            int sum = (random.nextInt(6) + 1) + (random.nextInt(6) + 1);
+            int sum = ThreadLocalRandom.current().nextInt(1, 7) + ThreadLocalRandom.current().nextInt(1, 7);
             p.sendMessage(color("&#0055ff&lMIR-TIME &8» &fСумма кубиков: &#00FF66&l" + sum));
             double m = (slot == 20 && sum < 7) ? 1.9 : (slot == 22 && sum == 7) ? 4.5 : (slot == 24 && sum > 7) ? 1.9 : 0.0;
             finish(p, s, m);
@@ -318,7 +410,7 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
         }
         if (s.selectedGame.equals("horses") && s.inProgress && (slot == 20 || slot == 21 || slot == 23 || slot == 24)) {
             int[] h = {20, 21, 23, 24};
-            finish(p, s, h[random.nextInt(4)] == slot ? 2.0 : 0.0);
+            finish(p, s, h[ThreadLocalRandom.current().nextInt(4)] == slot ? 2.0 : 0.0);
             inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
         }
         if (s.selectedGame.equals("treasure") && s.inProgress) {
@@ -328,6 +420,8 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
                 if (m == 0.0) {
                     p.playSound(p.getLocation(), Sound.ENTITY_GENERIC_EXPLODE, 1f, 1f);
                     inv.setItem(slot, item(Material.TNT, "&c&l[✗] ДИНАМИТ!", null));
+                    treasureFields.remove(p.getUniqueId());
+                    treasureWin.remove(p.getUniqueId());
                     finish(p, s, 0.0);
                     inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
                 } else {
@@ -335,10 +429,13 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
                     double tot = treasureWin.getOrDefault(p.getUniqueId(), 0.0) + m;
                     treasureWin.put(p.getUniqueId(), tot);
                     inv.setItem(slot, item(Material.GOLD_INGOT, "&#00FF66&l[$] +" + m + "x", null));
-                    inv.setItem(40, item(Material.CHEST, "&#00FF66&l[Забрать: x" + String.format("%.1f", tot) + "]", null));
+                    inv.setItem(40, item(Material.CHEST, "&#00FF66&l[Забрать: x" + String.format(Locale.US, "%.1f", tot) + "]", null));
                 }
             } else if (slot == 40 && treasureWin.getOrDefault(p.getUniqueId(), 0.0) > 0) {
-                finish(p, s, treasureWin.get(p.getUniqueId()));
+                double winMult = treasureWin.get(p.getUniqueId());
+                treasureFields.remove(p.getUniqueId());
+                treasureWin.remove(p.getUniqueId());
+                finish(p, s, winMult);
                 inv.setItem(40, item(Material.ARROW, "&a[Назад к ставке]", null));
             }
         }
@@ -346,11 +443,14 @@ public class MirTimeCasino extends JavaPlugin implements CommandExecutor, Listen
 
     private void finish(Player p, PlayerSession s, double factor) {
         s.inProgress = false;
-        long win = Math.round(s.bet * factor);
+        long win = Math.round(s.activeBet * factor);
+        Valuta usedCurrency = s.activeCurrency;
+        s.activeBet = 0;
+
         if (win > 0) {
-            data.giveBalance(p, s.currency, win);
+            data.giveBalance(p, usedCurrency, win);
             p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1f);
-            p.sendMessage(color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8» &fПобеда! Выигрыш: &#00FF66&l" + fmt(win) + " &8(&#00FF66x" + factor + "&8)"));
+            p.sendMessage(color("&#0055ff&l⚡ &#00E5FF&lMIR-TIME &8» &fПобеда! Выигрыш: &#00FF66&l" + fmt(win) + " &8(&#00FF66x" + String.format(Locale.US, "%.2f", factor) + "&8)"));
         } else {
             p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             p.sendMessage(color("&#0055ff[✗] &cВы проиграли ставку! &fДодеп токенов: &#00E5FF&ndon.mir-time.ru"));
