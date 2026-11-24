@@ -5,6 +5,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -19,6 +20,30 @@ public class CasinoData {
 
     public final Map<UUID, PlayerSession> sessions = new HashMap<>();
     private static final NumberFormat FORMAT = NumberFormat.getInstance(Locale.US);
+
+    // Уникальный маркер инвентаря казино — гарантирует 100% защиту от перехвата чужих меню (iks_shop и др.)
+    public static class CasinoHolder implements InventoryHolder {
+        public enum MenuType { MAIN, BET, CURRENCY, GAME }
+        private final MenuType type;
+        private Inventory inventory;
+
+        public CasinoHolder(MenuType type) {
+            this.type = type;
+        }
+
+        public MenuType getType() {
+            return type;
+        }
+
+        public void setInventory(Inventory inventory) {
+            this.inventory = inventory;
+        }
+
+        @Override
+        public Inventory getInventory() {
+            return inventory;
+        }
+    }
 
     public enum Valuta {
         TOKENS("&#00E5FFТокены", Material.EMERALD),
@@ -40,6 +65,8 @@ public class CasinoData {
         public Valuta currency = Valuta.TOKENS;
         public long bet = 10;
         public boolean inProgress = false;
+        public long activeBet = 0; // Зафиксированная ставка текущей игры (защита от подмены во время игры)
+        public Valuta activeCurrency = Valuta.TOKENS;
     }
 
     public void init(MirTimeCasino plugin) {}
@@ -48,8 +75,13 @@ public class CasinoData {
         return sessions.computeIfAbsent(p.getUniqueId(), k -> new PlayerSession());
     }
 
+    public void clearSession(UUID uuid) {
+        sessions.remove(uuid);
+    }
+
     public long getBalance(Player p, Valuta c) {
         return switch (c) {
+            // Если используешь GemsEconomy для токенов, замени плейсхолдер на %gemseconomy_balance_tokens% (или оставь свой)
             case TOKENS -> parsePapiLong(p, "%playerpoints_points%");
             case VAULT -> parsePapiLong(p, "%vault_eco_balance%");
             case DIAMOND -> countItems(p, Material.DIAMOND);
@@ -112,8 +144,10 @@ public class CasinoData {
     }
 
     private void giveItems(Player p, Material mat, int amount) {
-        HashMap<Integer, ItemStack> left = p.getInventory().addItem(new ItemStack(mat, amount));
-        for (ItemStack drop : left.values()) p.getWorld().dropItemNaturally(p.getLocation(), drop);
+        if (p.isOnline()) {
+            HashMap<Integer, ItemStack> left = p.getInventory().addItem(new ItemStack(mat, amount));
+            for (ItemStack drop : left.values()) p.getWorld().dropItemNaturally(p.getLocation(), drop);
+        }
     }
 
     public static String color(String text) {
